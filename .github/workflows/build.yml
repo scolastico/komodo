@@ -8,7 +8,6 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
   build-and-push:
@@ -23,42 +22,23 @@ jobs:
         include:
           - arch: amd64
             runner: ubuntu-24.04
-            target: x86_64-unknown-linux-gnu
           - arch: arm64
             runner: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-gnu
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Set up Environment Variables
         run: |
-          sudo apt-get update
-          sudo apt-get install -y pkg-config libssl-dev cmake
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-          targets: ${{ matrix.target }}
-
-      - name: Extract and sanitize branch name
-        id: branch
-        run: |
+          # Ensures repository name is fully lowercase for GHCR
+          echo "IMAGE_NAME=$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+          
+          # Extracts branch name, replaces slashes with dashes, and lowercases it
           BRANCH_NAME=${GITHUB_REF#refs/heads/}
           SAFE_BRANCH_NAME=${BRANCH_NAME//\//-}
-          echo "safe_branch=${SAFE_BRANCH_NAME}" >> $GITHUB_OUTPUT
-
-      - name: Build Periphery binary
-        run: cargo build --release --bin periphery --target ${{ matrix.target }}
-
-      - name: Upload Periphery binary to artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: periphery-binary-linux-${{ matrix.arch }}
-          path: target/${{ matrix.target }}/release/periphery
-          retention-days: 5
+          SAFE_BRANCH_NAME=$(echo "$SAFE_BRANCH_NAME" | tr '[:upper:]' '[:lower:]')
+          echo "SAFE_BRANCH=${SAFE_BRANCH_NAME}" >> $GITHUB_ENV
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -70,13 +50,40 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Build and push Binaries image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: bin/binaries.Dockerfile
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-binaries:${{ env.SAFE_BRANCH }}-${{ matrix.arch }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Extract Periphery binary
+        run: |
+          # Pull the freshly built binaries image
+          IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-binaries:${{ env.SAFE_BRANCH }}-${{ matrix.arch }}
+          docker pull $IMAGE
+          
+          # Create a temporary container to extract the compiled binary
+          docker create --name extract $IMAGE
+          docker cp extract:/periphery ./periphery-binary
+          docker rm extract
+
+      - name: Upload Periphery binary to artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: periphery-binary-linux-${{ matrix.arch }}
+          path: ./periphery-binary
+          retention-days: 5
+
       - name: Extract metadata for Core
         id: meta-core
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-core
-          tags: |
-            type=raw,value=${{ steps.branch.outputs.safe_branch }}-${{ matrix.arch }}
+          tags: type=raw,value=${{ env.SAFE_BRANCH }}-${{ matrix.arch }}
 
       - name: Build and push Core image
         uses: docker/build-push-action@v6
@@ -86,14 +93,17 @@ jobs:
           push: true
           tags: ${{ steps.meta-core.outputs.tags }}
           labels: ${{ steps.meta-core.outputs.labels }}
+          build-args: |
+            BINARIES_IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-binaries:${{ env.SAFE_BRANCH }}-${{ matrix.arch }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Extract metadata for Periphery
         id: meta-periphery
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-periphery
-          tags: |
-            type=raw,value=${{ steps.branch.outputs.safe_branch }}-${{ matrix.arch }}
+          tags: type=raw,value=${{ env.SAFE_BRANCH }}-${{ matrix.arch }}
 
       - name: Build and push Periphery image
         uses: docker/build-push-action@v6
@@ -103,6 +113,10 @@ jobs:
           push: true
           tags: ${{ steps.meta-periphery.outputs.tags }}
           labels: ${{ steps.meta-periphery.outputs.labels }}
+          build-args: |
+            BINARIES_IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-binaries:${{ env.SAFE_BRANCH }}-${{ matrix.arch }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   merge-manifests:
     name: Create Multi-Arch Manifests
@@ -111,6 +125,14 @@ jobs:
     permissions:
       packages: write
     steps:
+      - name: Set up Environment Variables
+        run: |
+          echo "IMAGE_NAME=$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+          BRANCH_NAME=${GITHUB_REF#refs/heads/}
+          SAFE_BRANCH_NAME=${BRANCH_NAME//\//-}
+          SAFE_BRANCH_NAME=$(echo "$SAFE_BRANCH_NAME" | tr '[:upper:]' '[:lower:]')
+          echo "SAFE_BRANCH=${SAFE_BRANCH_NAME}" >> $GITHUB_ENV
+
       - name: Log in to the Container registry
         uses: docker/login-action@v3
         with:
@@ -118,25 +140,18 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract and sanitize branch name
-        id: branch
-        run: |
-          BRANCH_NAME=${GITHUB_REF#refs/heads/}
-          SAFE_BRANCH_NAME=${BRANCH_NAME//\//-}
-          echo "safe_branch=${SAFE_BRANCH_NAME}" >> $GITHUB_OUTPUT
-
       - name: Create and push Core manifest
         run: |
-          BRANCH=${{ steps.branch.outputs.safe_branch }}
           IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-core
+          BRANCH=${{ env.SAFE_BRANCH }}
           docker buildx imagetools create -t $IMAGE:$BRANCH \
             $IMAGE:$BRANCH-amd64 \
             $IMAGE:$BRANCH-arm64
 
       - name: Create and push Periphery manifest
         run: |
-          BRANCH=${{ steps.branch.outputs.safe_branch }}
           IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-periphery
+          BRANCH=${{ env.SAFE_BRANCH }}
           docker buildx imagetools create -t $IMAGE:$BRANCH \
             $IMAGE:$BRANCH-amd64 \
             $IMAGE:$BRANCH-arm64
