@@ -11,19 +11,54 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  release-images:
-    name: Build & Push Images to GHCR
-    runs-on: ubuntu-latest
+  build-and-push:
+    name: Build & Push (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
       packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libssl-dev cmake
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Extract and sanitize branch name
+        id: branch
+        run: |
+          BRANCH_NAME=${GITHUB_REF#refs/heads/}
+          SAFE_BRANCH_NAME=${BRANCH_NAME//\//-}
+          echo "safe_branch=${SAFE_BRANCH_NAME}" >> $GITHUB_OUTPUT
+
+      - name: Build Periphery binary
+        run: cargo build --release --bin periphery --target ${{ matrix.target }}
+
+      - name: Upload Periphery binary to artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: periphery-binary-linux-${{ matrix.arch }}
+          path: target/${{ matrix.target }}/release/periphery
+          retention-days: 5
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -35,30 +70,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract and sanitize branch name
-        id: branch
-        run: |
-          # Strip the refs/heads/ prefix
-          BRANCH_NAME=${GITHUB_REF#refs/heads/}
-          # Replace all forward slashes with dashes
-          SAFE_BRANCH_NAME=${BRANCH_NAME//\//-}
-          echo "safe_branch=${SAFE_BRANCH_NAME}" >> $GITHUB_OUTPUT
-
       - name: Extract metadata for Core
         id: meta-core
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-core
           tags: |
-            type=raw,value=${{ steps.branch.outputs.safe_branch }}
-            type=sha
+            type=raw,value=${{ steps.branch.outputs.safe_branch }}-${{ matrix.arch }}
 
       - name: Build and push Core image
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: bin/core/multi-arch.Dockerfile
-          platforms: linux/amd64,linux/arm64
+          file: bin/core/single-arch.Dockerfile
           push: true
           tags: ${{ steps.meta-core.outputs.tags }}
           labels: ${{ steps.meta-core.outputs.labels }}
@@ -69,49 +93,50 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-periphery
           tags: |
-            type=raw,value=${{ steps.branch.outputs.safe_branch }}
-            type=sha
+            type=raw,value=${{ steps.branch.outputs.safe_branch }}-${{ matrix.arch }}
 
       - name: Build and push Periphery image
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: bin/periphery/multi-arch.Dockerfile
-          platforms: linux/amd64,linux/arm64
+          file: bin/periphery/single-arch.Dockerfile
           push: true
           tags: ${{ steps.meta-periphery.outputs.tags }}
           labels: ${{ steps.meta-periphery.outputs.labels }}
 
-  build-periphery-bin:
-    name: Build & Upload Periphery Binary
+  merge-manifests:
+    name: Create Multi-Arch Manifests
+    needs: build-and-push
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - target: x86_64-unknown-linux-gnu
-            arch: amd64
-          - target: aarch64-unknown-linux-gnu
-            arch: arm64
-            
+    permissions:
+      packages: write
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
         with:
-          toolchain: stable
-          targets: ${{ matrix.target }}
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install cross
-        run: cargo install cross --git https://github.com/cross-rs/cross
+      - name: Extract and sanitize branch name
+        id: branch
+        run: |
+          BRANCH_NAME=${GITHUB_REF#refs/heads/}
+          SAFE_BRANCH_NAME=${BRANCH_NAME//\//-}
+          echo "safe_branch=${SAFE_BRANCH_NAME}" >> $GITHUB_OUTPUT
 
-      - name: Build Periphery binary
-        run: cross build --release --bin periphery --target ${{ matrix.target }}
+      - name: Create and push Core manifest
+        run: |
+          BRANCH=${{ steps.branch.outputs.safe_branch }}
+          IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-core
+          docker buildx imagetools create -t $IMAGE:$BRANCH \
+            $IMAGE:$BRANCH-amd64 \
+            $IMAGE:$BRANCH-arm64
 
-      - name: Upload Periphery binary to artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: periphery-binary-linux-${{ matrix.arch }}
-          path: target/${{ matrix.target }}/release/periphery
-          retention-days: 5
+      - name: Create and push Periphery manifest
+        run: |
+          BRANCH=${{ steps.branch.outputs.safe_branch }}
+          IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-periphery
+          docker buildx imagetools create -t $IMAGE:$BRANCH \
+            $IMAGE:$BRANCH-amd64 \
+            $IMAGE:$BRANCH-arm64
