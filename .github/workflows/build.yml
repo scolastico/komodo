@@ -67,7 +67,7 @@ jobs:
           docker pull $IMAGE
           
           # Create a temporary container to extract the compiled binary
-          docker create --name extract $IMAGE
+          docker create --name extract $IMAGE /periphery
           docker cp extract:/periphery ./periphery-binary
           docker rm extract
 
