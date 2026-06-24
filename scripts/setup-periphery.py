@@ -3,7 +3,6 @@ import sys
 import os
 import shutil
 import platform
-import json
 import urllib.request
 
 def parse_args():
@@ -15,8 +14,9 @@ def parse_args():
 
 	p.add_argument(
 		"--version", "-v",
-		default=json.load(urllib.request.urlopen("https://api.github.com/repos/moghtech/komodo/releases/latest"))["tag_name"],
-		help="Install a specific Komodo version, like 'v2.0.0'"
+		default=None,
+		help="Override the image tag, e.g. 'unstable-release' or 'v2.0.0'. "
+		     "Replaces the tag in --image when given."
 	)
 
 	p.add_argument(
@@ -59,12 +59,32 @@ def parse_args():
 	)
 
 	p.add_argument(
-		"--binary-url",
-		default="https://github.com/moghtech/komodo/releases/download",
-		help="Use alternate binary source"
+		"--image",
+		default="ghcr.io/scolastico/komodo-periphery:unstable-release",
+		help="Docker image to extract the Periphery binary from."
 	)
 
-	return p.parse_args()
+	p.add_argument(
+		"--image-bin-path",
+		default="/usr/local/bin/periphery",
+		help="Path of the periphery binary inside the image."
+	)
+
+	args = p.parse_args()
+
+	# If --version is given, swap out the tag of --image with it.
+	if args.version != None:
+		args.image = apply_image_tag(args.image, args.version)
+
+	return args
+
+def apply_image_tag(image, tag):
+	# Replace the tag on an image reference without mistaking a registry port
+	# (e.g. "host:5000/repo") for a tag.
+	last_segment = image.rsplit("/", 1)[-1]
+	if ":" in last_segment:
+		image = image.rsplit(":", 1)[0]
+	return f'{image}:{tag}'
 
 def load_paths(args):
 	home_dir = os.environ['HOME']
@@ -91,7 +111,17 @@ def load_paths(args):
 	 		"/etc/systemd/system",
 		]
 
+def has_docker():
+	# Make sure the docker CLI is available before trying to extract from an image.
+	return shutil.which("docker") is not None
+
 def download_binary(args, bin_dir):
+	if not has_docker():
+		raise RuntimeError(
+			"The 'docker' command was not found. Docker is required to extract "
+			"the Periphery binary from an image. Install Docker and try again."
+		)
+
 	# stop periphery in case its currently in use
 	user = ""
 	if args.user:
@@ -107,25 +137,41 @@ def download_binary(args, bin_dir):
 	if os.path.isfile(bin_path):
 		os.remove(bin_path)
 
-	periphery_bin = "periphery-x86_64"
+	# The image is published as a multi-arch manifest, so 'docker pull' picks
+	# the matching binary for the host automatically (no per-arch name needed).
 	arch = platform.machine().lower()
-	if arch == "aarch64" or arch == "arm64":
-		print("aarch64 detected")
-		periphery_bin = "periphery-aarch64"
-	else:
-		print("using x86_64 binary")
+	print(f'detected architecture: {arch}')
 
-	# download the binary to bin path
-	if os.system(f'curl -f -sSL {args.binary_url}/{args.version}/{periphery_bin} -o {bin_path}') != 0:
+	# pull the image
+	print(f'pulling image {args.image}')
+	if os.system(f'docker pull {args.image}') != 0:
 		raise RuntimeError(
-			f"Failed to download binary from "
-			f"{args.binary_url}/{args.version}/{periphery_bin}"
-			f"\n\nDid you provide a valid tag for '--version'? Check here for valid version tags:"
-			f"\nhttps://github.com/moghtech/komodo/tags"
+			f"Failed to pull image '{args.image}'.\n\n"
+			f"Is Docker running and is the image reference valid?\n"
+			f"You can override it with '--image' (and '--version' to set the tag)."
 		)
 
+	# Create a temporary (non-running) container so the binary can be copied out.
+	container = "komodo-periphery-extract"
+	# clean up any leftover container from a previous/interrupted run
+	os.system(f'docker rm -f {container} > /dev/null 2>&1')
+
+	if os.system(f'docker create --name {container} {args.image} > /dev/null') != 0:
+		raise RuntimeError(f"Failed to create container from '{args.image}'")
+
+	try:
+		# copy the compiled binary out of the image to bin_path
+		if os.system(f'docker cp {container}:{args.image_bin_path} {bin_path}') != 0:
+			raise RuntimeError(
+				f"Failed to copy '{args.image_bin_path}' out of the image.\n"
+				f"If the binary lives elsewhere in the image, set '--image-bin-path'."
+			)
+	finally:
+		# always remove the temporary container
+		os.system(f'docker rm -f {container} > /dev/null 2>&1')
+
 	# add executable permissions
-	os.popen(f'chmod +x {bin_path}')
+	os.chmod(bin_path, 0o755)
 
 def map_config_line(args, home_dir, line):
 	## Handle root directory
@@ -224,7 +270,7 @@ def main():
 
 	[home_dir, bin_dir, config_dir, service_dir] = load_paths(args)
 	
-	print(f'version: {args.version}')
+	print(f'image: {args.image}')
 	print(f'core address: {args.core_address}')
 	print(f'connect as: {args.connect_as}')
 	print(f'user install: {args.user}')
