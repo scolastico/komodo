@@ -6,6 +6,7 @@ import { ICONS } from "@/lib/icons";
 import {
   Box,
   Button,
+  Checkbox,
   Divider,
   Group,
   List,
@@ -140,8 +141,10 @@ function BatchExecutionsModal({
 }) {
   const [selected, setSelected] = useSelectedResources(type);
   const [input, setInput] = useState("");
+  const [keepContainers, setKeepContainers] = useState(false);
   const onClose = () => {
     setInput("");
+    setKeepContainers(false);
     _onClose();
   };
 
@@ -205,6 +208,15 @@ function BatchExecutionsModal({
               onChange={(e) => setInput(e.target.value)}
               error={input === formatted ? undefined : "Does not match"}
             />
+
+            {type === "Stack" && execution === "DeleteStack" && (
+              <Checkbox
+                label="Keep containers running"
+                description="Skips the stack destroy, leaving the containers orphaned from any Stack. Useful when transitioning to a git / file defined Stack."
+                checked={keepContainers}
+                onChange={(e) => setKeepContainers(e.currentTarget.checked)}
+              />
+            )}
           </>
         )}
 
@@ -216,7 +228,11 @@ function BatchExecutionsModal({
             onClick={() => {
               for (const resource of selected) {
                 if (execution.startsWith("Delete")) {
-                  write({ id: resource } as any);
+                  write(
+                    (execution === "DeleteStack"
+                      ? { id: resource, keep_containers: keepContainers }
+                      : { id: resource }) as any,
+                  );
                 } else if (
                   execution.startsWith("Refresh") ||
                   execution.startsWith("Check")
