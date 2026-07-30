@@ -93,6 +93,12 @@ pub fn delete_stack() {}
 pub struct DeleteStack {
   /// The id or name of the stack to delete.
   pub id: String,
+  /// Skip destroying the stack before deleting it.
+  /// The containers are left running, orphaned from any Stack.
+  /// Useful when transitioning a UI defined Stack to a git / file defined one.
+  /// Default: false
+  #[serde(default)]
+  pub keep_containers: bool,
 }
 
 //

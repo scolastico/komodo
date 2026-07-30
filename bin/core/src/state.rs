@@ -18,7 +18,7 @@ use komodo_client::entities::{
   stats::{SystemInformation, SystemStats},
   swarm::SwarmState,
 };
-use mogh_cache::CloneCache;
+use mogh_cache::{CloneCache, SetCache};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -139,6 +139,14 @@ pub fn stack_status_cache() -> &'static StackStatusCache {
   static STACK_STATUS_CACHE: OnceLock<StackStatusCache> =
     OnceLock::new();
   STACK_STATUS_CACHE.get_or_init(Default::default)
+}
+
+/// Stack ids with an in-progress delete that should skip
+/// destroying the stack, leaving the containers running.
+pub fn stack_keep_containers_cache() -> &'static SetCache<String> {
+  static STACK_KEEP_CONTAINERS_CACHE: OnceLock<SetCache<String>> =
+    OnceLock::new();
+  STACK_KEEP_CONTAINERS_CACHE.get_or_init(Default::default)
 }
 
 #[derive(Default, Clone, Debug)]

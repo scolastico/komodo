@@ -50,7 +50,10 @@ use crate::{
     },
     setup_stack_execution,
   },
-  state::{db_client, image_digest_cache, stack_status_cache},
+  state::{
+    db_client, image_digest_cache, stack_keep_containers_cache,
+    stack_status_cache,
+  },
 };
 
 use super::WriteArgs;
@@ -113,7 +116,21 @@ impl Resolve<WriteArgs> for DeleteStack {
     self,
     WriteArgs { user }: &WriteArgs,
   ) -> mogh_error::Result<Stack> {
-    Ok(resource::delete::<Stack>(&self.id, user).await?)
+    if !self.keep_containers {
+      return Ok(resource::delete::<Stack>(&self.id, user).await?);
+    }
+    // Mark the stack to skip the destroy in `pre_delete`,
+    // leaving the containers running.
+    let stack = get_check_permissions::<Stack>(
+      &self.id,
+      user,
+      PermissionLevel::Write.into(),
+    )
+    .await?;
+    stack_keep_containers_cache().insert(stack.id.clone()).await;
+    let res = resource::delete::<Stack>(&self.id, user).await;
+    stack_keep_containers_cache().remove(&stack.id).await;
+    Ok(res?)
   }
 }
 

@@ -7238,6 +7238,13 @@ export interface DeleteServer {
 export interface DeleteStack {
     /** The id or name of the stack to delete. */
     id: string;
+    /**
+     * Skip destroying the stack before deleting it.
+     * The containers are left running, orphaned from any Stack.
+     * Useful when transitioning a UI defined Stack to a git / file defined one.
+     * Default: false
+     */
+    keep_containers?: boolean;
 }
 /**
  * Deletes the Swarm at the given id, and returns the deleted Swarm.

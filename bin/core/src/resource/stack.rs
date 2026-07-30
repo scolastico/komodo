@@ -40,7 +40,8 @@ use crate::{
   monitor::{refresh_server_cache, refresh_swarm_cache},
   state::{
     action_states, all_resources_cache, db_client,
-    server_status_cache, stack_status_cache,
+    server_status_cache, stack_keep_containers_cache,
+    stack_status_cache,
   },
 };
 
@@ -353,6 +354,15 @@ impl super::KomodoResource for Stack {
     stack: &Resource<Self::Config, Self::Info>,
     update: &mut Update,
   ) -> anyhow::Result<()> {
+    // The delete was requested with `keep_containers: true`,
+    // the containers are left running, orphaned from any Stack.
+    if stack_keep_containers_cache().contains(&stack.id).await {
+      update.push_simple_log(
+        "Destroy Stack",
+        "Skipping stack destroy, containers are left running.",
+      );
+      return Ok(());
+    }
     // If it is Up, it should be taken down
     let state = get_stack_state(stack)
       .await
