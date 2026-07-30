@@ -93,6 +93,12 @@ pub fn delete_stack() {}
 pub struct DeleteStack {
   /// The id or name of the stack to delete.
   pub id: String,
+  /// Skip destroying the stack before deleting it.
+  /// The containers are left running, orphaned from any Stack.
+  /// Useful when transitioning a UI defined Stack to a git / file defined one.
+  /// Default: false
+  #[serde(default)]
+  pub keep_containers: bool,
 }
 
 //
@@ -310,6 +316,10 @@ pub struct BatchCheckStackForUpdate {
   /// extra-stack-1, extra-stack-2
   /// ```
   pub pattern: String,
+  /// Filter matches by tag.
+  /// If empty, skips tag filtering.
+  #[serde(default)]
+  pub tags: Vec<String>,
   /// Normally resources with 'auto_update' will be
   /// redeployed immediately if updates are found.
   /// With this enabled, convert this into an UpdateAvailable alert.

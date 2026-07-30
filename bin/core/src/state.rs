@@ -18,14 +18,15 @@ use komodo_client::entities::{
   stats::{SystemInformation, SystemStats},
   swarm::SwarmState,
 };
-use mogh_cache::CloneCache;
+use mogh_cache::{CloneCache, SetCache};
+use tokio_util::sync::CancellationToken;
 
 use crate::{
   config::core_config,
   connection::PeripheryConnections,
   helpers::{
     action_state::ActionStates, all_resources::AllResourcesById,
-    image_digest::ImageDigestCache,
+    builder::BuilderUsage, image_digest::ImageDigestCache,
   },
 };
 
@@ -140,6 +141,14 @@ pub fn stack_status_cache() -> &'static StackStatusCache {
   STACK_STATUS_CACHE.get_or_init(Default::default)
 }
 
+/// Stack ids with an in-progress delete that should skip
+/// destroying the stack, leaving the containers running.
+pub fn stack_keep_containers_cache() -> &'static SetCache<String> {
+  static STACK_KEEP_CONTAINERS_CACHE: OnceLock<SetCache<String>> =
+    OnceLock::new();
+  STACK_KEEP_CONTAINERS_CACHE.get_or_init(Default::default)
+}
+
 #[derive(Default, Clone, Debug)]
 pub struct CachedDeploymentStatus {
   /// The deployment id
@@ -208,6 +217,7 @@ pub fn action_state_cache() -> &'static ActionStateCache {
   ACTION_STATE_CACHE.get_or_init(Default::default)
 }
 
+/// Store all resources in local cache for fast lookup
 pub fn all_resources_cache() -> &'static ArcSwap<AllResourcesById> {
   static ALL_RESOURCES: OnceLock<ArcSwap<AllResourcesById>> =
     OnceLock::new();
@@ -221,4 +231,31 @@ pub fn image_digest_cache() -> &'static ImageDigestCache {
   static IMAGE_DIGEST_CACHE: OnceLock<Arc<ImageDigestCache>> =
     OnceLock::new();
   IMAGE_DIGEST_CACHE.get_or_init(ImageDigestCache::new)
+}
+
+/// Maps Builder id => downstream count map (eg server id => active count)
+type BuilderUsageCache = CloneCache<String, Arc<BuilderUsage>>;
+
+/// For builders with multiple downstream machines to choose.
+/// Stores active build count for each downstream.
+/// Maps Builder id => downstream count map
+pub fn builder_usage_cache() -> &'static BuilderUsageCache {
+  static BUILDER_USAGE_CACHE: OnceLock<BuilderUsageCache> =
+    OnceLock::new();
+  BUILDER_USAGE_CACHE.get_or_init(Default::default)
+}
+
+type CancelCache = CloneCache<String, CancellationToken>;
+
+/// Maps procedure id => CancellationToken
+pub fn procedure_cancel_cache() -> &'static CancelCache {
+  static PROCEDURE_CANCEL_CACHE: OnceLock<CancelCache> =
+    OnceLock::new();
+  PROCEDURE_CANCEL_CACHE.get_or_init(Default::default)
+}
+
+/// Maps update id => CancellationToken
+pub fn action_cancel_cache() -> &'static CancelCache {
+  static ACTION_CANCEL_CACHE: OnceLock<CancelCache> = OnceLock::new();
+  ACTION_CANCEL_CACHE.get_or_init(Default::default)
 }
