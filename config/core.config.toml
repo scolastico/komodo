@@ -293,6 +293,18 @@ oidc_additional_audiences = []
 ## Default: false
 oidc_auto_redirect = false
 
+## Name of an OIDC claim whose string value sets the user's Komodo group.
+## When unset or empty, group membership remains manually managed.
+## Env: KOMODO_OIDC_GROUP_FIELD
+# oidc_group_field = "group"
+
+## Name of an OIDC claim whose value sets the user's Komodo type.
+## Accepted claim values: "super_admin", "admin", or "user".
+## Missing or invalid claim values fall back to "user".
+## When unset or empty, the user type remains manually managed.
+## Env: KOMODO_OIDC_USER_TYPE_FIELD
+# oidc_user_type_field = "user_type"
+
 #########
 # OAUTH #
 #########

@@ -51,6 +51,23 @@ Check out the [Authentik integration docs](https://integrations.goauthentik.io/i
   - `KOMODO_OIDC_CLIENT_ID=...` what you specified as `Client ID`
   - `KOMODO_OIDC_CLIENT_SECRET=...` that you copied from Keycloak
 
+### Synchronize OIDC user access
+
+Komodo can optionally synchronize a user's group and user type from OIDC
+claims on every OIDC login:
+
+- `KOMODO_OIDC_GROUP_FIELD=group` reads the target Komodo user-group
+  name from the `group` claim. The group must already exist. When enabled,
+  this replaces the user's existing group memberships; a missing, invalid,
+  or unknown group removes the user from all groups.
+- `KOMODO_OIDC_USER_TYPE_FIELD=user_type` reads `super_admin`, `admin`, or
+  `user` from the `user_type` claim. A missing or invalid value becomes
+  `user`.
+
+Claim field names may use dot notation for nested values, such as
+`realm_access.komodo_role`. Each setting is independent. Leave either one
+unset to keep that part of the user manually managed.
+
 ## Limit Periphery IPs
 
 If using a reverse proxy with Komodo Core, you can limit the IPs which can connect to the Periphery endpoint. For example with Caddy:
