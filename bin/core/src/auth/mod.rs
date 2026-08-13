@@ -20,7 +20,8 @@ use mogh_auth_client::{
 use mogh_auth_server::{
   AuthImpl,
   provider::{
-    jwt::JwtProvider, oidc::SubjectIdentifier,
+    jwt::JwtProvider,
+    oidc::{OidcUserClaims, SubjectIdentifier},
     passkey::PasskeyProvider,
   },
   rand::random_string,
@@ -366,6 +367,20 @@ impl AuthImpl for KomodoAuthImpl {
       }
     });
     Some(&OIDC_CONFIG)
+  }
+
+  fn oidc_user_claims_enabled(&self) -> bool {
+    let config = core_config();
+    !config.oidc_group_field.trim().is_empty()
+      || !config.oidc_user_type_field.trim().is_empty()
+  }
+
+  fn sync_oidc_user(
+    &self,
+    user_id: String,
+    claims: OidcUserClaims,
+  ) -> mogh_auth_server::DynFuture<mogh_error::Result<()>> {
+    Box::pin(sync_oidc_user(user_id, claims))
   }
 
   fn find_user_with_oidc_subject(
@@ -824,5 +839,153 @@ impl AuthImpl for KomodoAuthImpl {
 
   fn server_private_key(&self) -> Option<&RotatableKeyPair> {
     Some(core_keys())
+  }
+}
+
+fn oidc_claim<'a>(
+  claims: &'a OidcUserClaims,
+  field: &str,
+) -> Option<&'a serde_json::Value> {
+  claims.get(field).or_else(|| {
+    let mut parts = field.split('.');
+    let mut value = claims.get(parts.next()?)?;
+    for part in parts {
+      value = value.as_object()?.get(part)?;
+    }
+    Some(value)
+  })
+}
+
+fn oidc_user_type(
+  claims: &OidcUserClaims,
+  field: &str,
+) -> (bool, bool) {
+  match oidc_claim(claims, field).and_then(|value| value.as_str()) {
+    Some("super_admin") => (true, true),
+    Some("admin") => (true, false),
+    Some("user") | Some(_) | None => (false, false),
+  }
+}
+
+async fn sync_oidc_user(
+  user_id: String,
+  claims: OidcUserClaims,
+) -> mogh_error::Result<()> {
+  let config = core_config();
+  let user_type_field = config.oidc_user_type_field.trim();
+  if !user_type_field.is_empty() {
+    let (admin, super_admin) =
+      oidc_user_type(&claims, user_type_field);
+    update_one_by_id(
+      &db_client().users,
+      &user_id,
+      doc! {
+        "$set": {
+          "admin": admin,
+          "super_admin": super_admin,
+        }
+      },
+      None,
+    )
+    .await
+    .context("Failed to synchronize OIDC user type")?;
+  }
+
+  let group_field = config.oidc_group_field.trim();
+  if group_field.is_empty() {
+    return Ok(());
+  }
+
+  let group_name = oidc_claim(&claims, group_field)
+    .and_then(|value| value.as_str())
+    .map(str::trim)
+    .filter(|group| !group.is_empty());
+  let db = db_client();
+  let group = if let Some(group_name) = group_name {
+    let group = db
+      .user_groups
+      .find_one(doc! { "name": group_name })
+      .await
+      .context("Failed to query OIDC user group")?;
+    if group.is_none() {
+      warn!(
+        user_id,
+        group = group_name,
+        "OIDC user group does not exist; removing managed group memberships"
+      );
+    }
+    group
+  } else {
+    None
+  };
+
+  db.user_groups
+    .update_many(
+      doc! { "users": &user_id },
+      doc! { "$pull": { "users": &user_id } },
+    )
+    .await
+    .context("Failed to remove old OIDC user group memberships")?;
+
+  if let Some(group) = group {
+    update_one_by_id(
+      &db.user_groups,
+      &group.id,
+      doc! { "$addToSet": { "users": &user_id } },
+      None,
+    )
+    .await
+    .context("Failed to add OIDC user to group")?;
+  }
+
+  Ok(())
+}
+
+#[cfg(test)]
+mod oidc_sync_tests {
+  use serde_json::json;
+
+  use super::*;
+
+  fn claim_map(value: serde_json::Value) -> OidcUserClaims {
+    value.as_object().unwrap().clone()
+  }
+
+  #[test]
+  fn reads_direct_and_nested_claims() {
+    let claims = claim_map(json!({
+      "group.name": "direct",
+      "realm": { "role": "admin" }
+    }));
+
+    assert_eq!(
+      oidc_claim(&claims, "group.name").and_then(|v| v.as_str()),
+      Some("direct")
+    );
+    assert_eq!(
+      oidc_claim(&claims, "realm.role").and_then(|v| v.as_str()),
+      Some("admin")
+    );
+  }
+
+  #[test]
+  fn maps_supported_user_types() {
+    let claims = claim_map(json!({ "type": "super_admin" }));
+    assert_eq!(oidc_user_type(&claims, "type"), (true, true));
+
+    let claims = claim_map(json!({ "type": "admin" }));
+    assert_eq!(oidc_user_type(&claims, "type"), (true, false));
+
+    let claims = claim_map(json!({ "type": "user" }));
+    assert_eq!(oidc_user_type(&claims, "type"), (false, false));
+  }
+
+  #[test]
+  fn invalid_or_missing_user_type_falls_back_to_user() {
+    let claims = claim_map(json!({ "type": "owner" }));
+    assert_eq!(oidc_user_type(&claims, "type"), (false, false));
+
+    let claims = claim_map(json!({}));
+    assert_eq!(oidc_user_type(&claims, "type"), (false, false));
   }
 }

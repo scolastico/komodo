@@ -178,6 +178,11 @@ pub struct Env {
   pub komodo_oidc_additional_audiences_file: Option<PathBuf>,
   /// Override `oidc_auto_redirect`
   pub komodo_oidc_auto_redirect: Option<bool>,
+  /// Override `oidc_group_field`
+  #[serde(alias = "komodo_oidc_user_group_field")]
+  pub komodo_oidc_group_field: Option<String>,
+  /// Override `oidc_user_type_field`
+  pub komodo_oidc_user_type_field: Option<String>,
 
   /// Override `google_oauth.enabled`
   pub komodo_google_oauth_enabled: Option<bool>,
@@ -573,6 +578,19 @@ pub struct CoreConfig {
   /// Users can bypass the redirect by appending `?disableAutoLogin` to the login URL.
   #[serde(default)]
   pub oidc_auto_redirect: bool,
+
+  /// Name of an OIDC claim whose string value is the Komodo user group.
+  /// When empty, OIDC login does not change user group membership.
+  #[serde(default)]
+  #[serde(alias = "oidc_user_group_field")]
+  pub oidc_group_field: String,
+
+  /// Name of an OIDC claim whose value sets the Komodo user type.
+  /// Accepted claim values are `super_admin`, `admin`, and `user`.
+  /// Invalid or missing values are treated as `user`. When empty,
+  /// OIDC login does not change the user's type.
+  #[serde(default)]
+  pub oidc_user_type_field: String,
 
   // =========
   // = Oauth =
@@ -970,6 +988,8 @@ impl Default for CoreConfig {
       oidc_use_full_email: Default::default(),
       oidc_additional_audiences: Default::default(),
       oidc_auto_redirect: Default::default(),
+      oidc_group_field: Default::default(),
+      oidc_user_type_field: Default::default(),
       google_oauth: Default::default(),
       github_oauth: Default::default(),
       auth_rate_limit_disabled: Default::default(),
@@ -1078,6 +1098,8 @@ impl CoreConfig {
         .map(|aud| empty_or_redacted(aud))
         .collect(),
       oidc_auto_redirect: config.oidc_auto_redirect,
+      oidc_group_field: config.oidc_group_field,
+      oidc_user_type_field: config.oidc_user_type_field,
       google_oauth: NamedOauthConfig {
         enabled: config.google_oauth.enabled,
         client_id: empty_or_redacted(&config.google_oauth.client_id),
