@@ -3,7 +3,7 @@ name: Release CI
 on:
   push:
     branches: 
-      - '**'
+      - unstable-release
   workflow_dispatch: 
 
 env:
