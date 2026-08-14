@@ -188,7 +188,9 @@ impl OidcProvider {
     // Set the URL the user will be redirected to after the authorization process.
     .set_redirect_uri(RedirectUrl::new(format!(
       "{host}{path}/oidc/callback",
-    ))?);
+    ))?)
+    // Let the application define the complete scope list.
+    .disable_openid_scope();
 
     Ok(OidcProvider {
       client,
@@ -201,6 +203,7 @@ impl OidcProvider {
   pub fn authorize_url(
     &self,
     pkce_challenge: PkceCodeChallenge,
+    scopes: &[String],
   ) -> (Url, CsrfToken, Nonce) {
     self
       .client
@@ -210,9 +213,7 @@ impl OidcProvider {
         Nonce::new_random,
       )
       .set_pkce_challenge(pkce_challenge)
-      .add_scope(Scope::new("openid".to_string()))
-      .add_scope(Scope::new("profile".to_string()))
-      .add_scope(Scope::new("email".to_string()))
+      .add_scopes(scopes.iter().cloned().map(Scope::new))
       .url()
   }
 

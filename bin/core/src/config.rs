@@ -235,6 +235,11 @@ pub fn core_config() -> &'static CoreConfig {
         env.komodo_oidc_additional_audiences,
       )
       .unwrap_or(config.oidc_additional_audiences),
+      oidc_scopes: maybe_read_list_from_file(
+        env.komodo_oidc_scopes_file,
+        env.komodo_oidc_scopes,
+      )
+      .unwrap_or(config.oidc_scopes),
       oidc_auto_redirect: env
         .komodo_oidc_auto_redirect
         .unwrap_or(config.oidc_auto_redirect),
