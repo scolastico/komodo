@@ -308,6 +308,18 @@ pub trait AuthImpl: Send + Sync + 'static {
     None
   }
 
+  /// Scopes requested from the OIDC provider.
+  fn oidc_scopes(&self) -> &[String] {
+    static DEFAULT_OIDC_SCOPES: LazyLock<Vec<String>> =
+      LazyLock::new(|| {
+        ["openid", "profile", "email"]
+          .into_iter()
+          .map(String::from)
+          .collect()
+      });
+    &DEFAULT_OIDC_SCOPES
+  }
+
   /// Whether the application needs OIDC claims for user synchronization.
   fn oidc_user_claims_enabled(&self) -> bool {
     false

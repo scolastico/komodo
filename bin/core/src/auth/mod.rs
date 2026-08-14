@@ -369,6 +369,10 @@ impl AuthImpl for KomodoAuthImpl {
     Some(&OIDC_CONFIG)
   }
 
+  fn oidc_scopes(&self) -> &[String] {
+    &core_config().oidc_scopes
+  }
+
   fn oidc_user_claims_enabled(&self) -> bool {
     let config = core_config();
     !config.oidc_group_field.trim().is_empty()

@@ -64,7 +64,7 @@ pub async fn oidc_login<I: AuthImpl>(
 
     // Generate the authorization URL.
     let (auth_url, csrf_token, nonce) =
-      provider.authorize_url(pkce_challenge);
+      provider.authorize_url(pkce_challenge, auth.oidc_scopes());
 
     // Data inserted here will be matched on callback side for csrf protection.
     session
@@ -120,7 +120,7 @@ pub async fn oidc_link<I: AuthImpl>(
 
     // Generate the authorization URL.
     let (auth_url, csrf_token, nonce) =
-      provider.authorize_url(pkce_challenge);
+      provider.authorize_url(pkce_challenge, auth.oidc_scopes());
 
     session
       .insert_oidc_link(&SessionOidcLink {

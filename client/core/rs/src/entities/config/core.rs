@@ -176,6 +176,10 @@ pub struct Env {
   pub komodo_oidc_additional_audiences: Option<Vec<String>>,
   /// Override `oidc_additional_audiences` from file
   pub komodo_oidc_additional_audiences_file: Option<PathBuf>,
+  /// Override `oidc_scopes`
+  pub komodo_oidc_scopes: Option<Vec<String>>,
+  /// Override `oidc_scopes` from file
+  pub komodo_oidc_scopes_file: Option<PathBuf>,
   /// Override `oidc_auto_redirect`
   pub komodo_oidc_auto_redirect: Option<bool>,
   /// Override `oidc_group_field`
@@ -573,6 +577,11 @@ pub struct CoreConfig {
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub oidc_additional_audiences: Vec<String>,
 
+  /// Scopes requested from the OIDC provider.
+  /// Default: `["openid", "profile", "email"]`
+  #[serde(default = "default_oidc_scopes")]
+  pub oidc_scopes: Vec<String>,
+
   /// Automatically redirect unauthenticated users to the OIDC provider
   /// instead of showing the login page.
   /// Users can bypass the redirect by appending `?disableAutoLogin` to the login URL.
@@ -946,6 +955,13 @@ fn default_ssl_cert_file() -> String {
   "/config/ssl/cert.pem".to_string()
 }
 
+fn default_oidc_scopes() -> Vec<String> {
+  ["openid", "profile", "email"]
+    .into_iter()
+    .map(String::from)
+    .collect()
+}
+
 impl Default for CoreConfig {
   fn default() -> Self {
     Self {
@@ -987,6 +1003,7 @@ impl Default for CoreConfig {
       oidc_client_secret: Default::default(),
       oidc_use_full_email: Default::default(),
       oidc_additional_audiences: Default::default(),
+      oidc_scopes: default_oidc_scopes(),
       oidc_auto_redirect: Default::default(),
       oidc_group_field: Default::default(),
       oidc_user_type_field: Default::default(),
@@ -1097,6 +1114,7 @@ impl CoreConfig {
         .iter()
         .map(|aud| empty_or_redacted(aud))
         .collect(),
+      oidc_scopes: config.oidc_scopes,
       oidc_auto_redirect: config.oidc_auto_redirect,
       oidc_group_field: config.oidc_group_field,
       oidc_user_type_field: config.oidc_user_type_field,
@@ -1251,5 +1269,30 @@ impl mogh_server::session::SessionConfig for &CoreConfig {
   }
   fn allow_cross_site(&self) -> bool {
     self.session_allow_cross_site
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use serde_json::json;
+
+  use super::*;
+
+  #[test]
+  fn oidc_scopes_default_to_existing_scope_set() {
+    let config: CoreConfig =
+      serde_json::from_value(json!({})).unwrap();
+
+    assert_eq!(config.oidc_scopes, ["openid", "profile", "email"]);
+  }
+
+  #[test]
+  fn oidc_scopes_can_be_explicitly_configured() {
+    let config: CoreConfig = serde_json::from_value(json!({
+      "oidc_scopes": ["openid", "groups"]
+    }))
+    .unwrap();
+
+    assert_eq!(config.oidc_scopes, ["openid", "groups"]);
   }
 }
